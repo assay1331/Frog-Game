@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>건너라 개구리</title>
+<style>
+:root{--bg:#f7f7f5;--fg:#2b2b2b;--sub:#9a9a95;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1c1e;--fg:#eeeeea;--sub:#6e6e73}}
+:root[data-theme="dark"]{--bg:#1c1c1e;--fg:#eeeeea;--sub:#6e6e73}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;touch-action:none;user-select:none;-webkit-user-select:none;overflow:hidden}
+canvas{width:min(92vw,52vh);height:auto;display:block;image-rendering:pixelated}
+p{color:var(--sub);font-size:13px;margin:10px 0 0;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c" width="300" height="450"></canvas>
+<p>탭: 앞으로 · 스와이프: 좌 / 우 / 뒤로</p>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const T = 30, COLS = 10, ROWS = 15, W = 300, H = 450, PX = 3;
+const FROG = [
+"##......##",
+"#e#....#e#",
+".########.",
+"..######..",
+"..######..",
+".########.",
+"##.####.##",
+"#..####..#",
+"##......##",
+".#......#."];
+let S, hi = 0;
+try { hi = +localStorage.getItem('frog_hi') || 0; } catch (e) {}
+
+function reset() {
+  S = { mode: 'ready', col: 5, row: 0, fc: 5, fr: 0, hp: 1, dir: 0, cam: 0, best: 0,
+        started: false, lanes: { 0: { type: 'grass', trees: [], run: 0 } }, maxGen: 0, overT: 0 };
+}
+reset();
+
+function make(r) {
+  const prev = S.lanes[r - 1];
+  const run = prev.type === 'road' ? prev.run + 1 : 0;
+  const road = r >= 2 && run < 3 && Math.random() < 0.62;
+  if (!road) {
+    const trees = [];
+    if (r >= 2) for (let i = 0, n = Math.floor(Math.random() * 4); i < n; i++) trees[Math.floor(Math.random() * COLS)] = true;
+    return { type: 'grass', trees, run: 0 };
+  }
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  const speed = (40 + Math.random() * 60) * (1 + Math.min(r, 100) / 150);
+  const w = T * (1.6 + Math.random() * 1.2), gap = T * (3 + Math.random() * 3);
+  const cars = [];
+  let x = Math.random() * gap;
+  while (x < W + gap) { cars.push({ x, w }); x += w + gap; }
+  return { type: 'road', dir, speed, cars, period: cars.length * (w + gap), run: run + 1, trees: [] };
+}
+function lane(r) {
+  while (S.maxGen < r) { S.maxGen++; S.lanes[S.maxGen] = make(S.maxGen); }
+  return S.lanes[r];
+}
+
+function move(dx, dy, d) {
+  if (S.mode === 'over') { if (S.overT <= 0) { reset(); S.mode = 'play'; } return; }
+  if (S.mode === 'ready') S.mode = 'play';
+  if (S.hp < 0.7) return;
+  S.dir = d;
+  const nc = S.col + dx, nr = S.row + dy;
+  if (nc < 0 || nc >= COLS || nr < 0) return;
+  if (lane(nr).trees[nc]) return;
+  S.fc = S.col; S.fr = S.row;
+  S.col = nc; S.row = nr; S.hp = 0;
+  if (nr > S.best) S.best = nr;
+  S.started = true;
+}
+
+// 입력: 탭 = 앞으로, 스와이프 = 방향
+let sx = 0, sy = 0;
+addEventListener('pointerdown', e => { e.preventDefault(); sx = e.clientX; sy = e.clientY; });
+addEventListener('pointerup', e => {
+  e.preventDefault();
+  const dx = e.clientX - sx, dy = e.clientY - sy;
+  if (Math.abs(dx) < 24 && Math.abs(dy) < 24) move(0, 1, 0);
+  else if (Math.abs(dx) > Math.abs(dy)) dx > 0 ? move(1, 0, 1) : move(-1, 0, 3);
+  else if (dy > 0) move(0, -1, 2);
+  else move(0, 1, 0);
+});
+addEventListener('keydown', e => {
+  const k = e.code;
+  if (k === 'ArrowUp' || k === 'KeyW' || k === 'Space') { e.preventDefault(); move(0, 1, 0); }
+  else if (k === 'ArrowDown' || k === 'KeyS') { e.preventDefault(); move(0, -1, 2); }
+  else if (k === 'ArrowLeft' || k === 'KeyA') { e.preventDefault(); move(-1, 0, 3); }
+  else if (k === 'ArrowRight' || k === 'KeyD') { e.preventDefault(); move(1, 0, 1); }
+});
+
+function die() {
+  S.mode = 'over'; S.overT = 0.5;
+  if (S.best > hi) { hi = S.best; try { localStorage.setItem('frog_hi', hi); } catch (e) {} }
+}
+
+function update(dt) {
+  const s = S;
+  s.hp = Math.min(1, s.hp + dt / 0.1);
+  if (s.overT > 0) s.overT -= dt;
+  if (s.mode === 'over') return;
+  const base = Math.floor(s.cam);
+  for (let r = Math.max(0, base - 1); r <= base + ROWS + 1; r++) {
+    const L = lane(r);
+    if (L.type !== 'road') continue;
+    for (const c of L.cars) {
+      c.x += L.dir * L.speed * dt;
+      if (L.dir > 0 && c.x > W) c.x -= L.period;
+      if (L.dir < 0 && c.x + c.w < 0) c.x += L.period;
+    }
+  }
+  if (s.mode !== 'play') return;
+  const auto = s.started ? 0.3 + Math.min(s.best, 120) * 0.004 : 0;
+  const target = s.row - 4;
+  s.cam = Math.max(s.cam + auto * dt, s.cam + (target - s.cam) * Math.min(1, dt * 6));
+  if (s.row < s.cam - 0.7) return die();
+  const L = lane(s.row);
+  if (L.type === 'road') {
+    const x1 = s.col * T + 6, x2 = s.col * T + 24;
+    for (const c of L.cars) if (x1 < c.x + c.w && x2 > c.x) return die();
+  }
+}
+
+function draw() {
+  const cs = getComputedStyle(document.documentElement);
+  const bg = cs.getPropertyValue('--bg').trim(), fg = cs.getPropertyValue('--fg').trim(), sub = cs.getPropertyValue('--sub').trim();
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const base = Math.floor(S.cam);
+  for (let r = Math.max(0, base - 1); r <= base + ROWS + 1; r++) {
+    const L = lane(r), y = Math.round(H - (r - S.cam + 1) * T);
+    if (L.type === 'grass') {
+      ctx.fillStyle = sub;
+      for (let i = 0; i < 6; i++) ctx.fillRect((r * 37 + i * 53) % (W - 4), y + 3 + (r * 11 + i * 17) % (T - 8), 2, 2);
+      ctx.fillStyle = fg;
+      L.trees.forEach((t, c) => {
+        if (!t) return;
+        ctx.fillRect(c * T + 8, y + 2, 14, 26);
+        ctx.fillRect(c * T + 4, y + 8, 22, 14);
+      });
+    } else {
+      ctx.globalAlpha = 0.1; ctx.fillStyle = fg; ctx.fillRect(0, y, W, T); ctx.globalAlpha = 1;
+      ctx.fillStyle = sub;
+      for (let x = 0; x < W; x += 30) ctx.fillRect(x + 6, y, 14, 2);
+      for (const c of L.cars) {
+        const x = Math.round(c.x);
+        ctx.fillStyle = fg;
+        ctx.fillRect(x, y + 9, c.w, 13);
+        ctx.fillRect(x + c.w * 0.2, y + 3, c.w * 0.55, 8);
+        ctx.fillRect(x + 4, y + 20, 7, 6);
+        ctx.fillRect(x + c.w - 11, y + 20, 7, 6);
+        ctx.fillStyle = bg;
+        ctx.fillRect(x + c.w * 0.26, y + 5, c.w * 0.18, 4);
+        ctx.fillRect(x + c.w * 0.5, y + 5, c.w * 0.18, 4);
+        ctx.fillRect(L.dir > 0 ? x + c.w - 3 : x, y + 12, 3, 3);
+      }
+    }
+  }
+  // 개구리
+  const e = S.hp, vc = S.fc + (S.col - S.fc) * e, vr = S.fr + (S.row - S.fr) * e;
+  const cx = vc * T + T / 2, cy = H - (vr - S.cam + 1) * T + T / 2 - Math.sin(e * Math.PI) * 6;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(S.dir * Math.PI / 2);
+  if (S.mode === 'over') ctx.scale(1.2, 0.5);
+  FROG.forEach((row, r) => {
+    for (let c = 0; c < 10; c++) {
+      if (row[c] === '.') continue;
+      ctx.fillStyle = row[c] === 'e' ? bg : fg;
+      ctx.fillRect(-15 + c * PX, -15 + r * PX, PX, PX);
+    }
+  });
+  ctx.restore();
+  // 점수
+  ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = fg;
+  ctx.fillText(String(S.best).padStart(3, '0'), 10, 26);
+  ctx.font = '13px monospace'; ctx.textAlign = 'right'; ctx.fillStyle = sub;
+  ctx.fillText('HI ' + String(hi).padStart(3, '0'), W - 10, 24);
+  if (S.mode !== 'play') {
+    ctx.fillStyle = bg; ctx.globalAlpha = 0.85; ctx.fillRect(40, 170, 220, 56); ctx.globalAlpha = 1;
+    ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.font = '17px system-ui, sans-serif';
+    ctx.fillText(S.mode === 'ready' ? '탭하여 시작' : '게임 오버', W / 2, 195);
+    if (S.mode === 'over') { ctx.font = '13px system-ui, sans-serif'; ctx.fillStyle = sub; ctx.fillText('탭하여 다시 시작', W / 2, 215); }
+  }
+}
+
+let last = performance.now();
+function loop(t) {
+  const dt = Math.min(0.033, (t - last) / 1000); last = t;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
